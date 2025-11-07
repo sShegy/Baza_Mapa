@@ -4,57 +4,54 @@ from auto_simulator import AutoSimulator
 from drive_simulator import DriveSimulator, get_route_coordinates, get_route_coords, load_serbian_roads, \
     show_route_distances
 
-# --- DODATI IMPORTI ZA SISTEM UPOZORENJA ---
+# --- IZMENJENI IMPORTI ZA SISTEM UPOZORENJA ---
 import math
 import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point, box
-from rtree import index
+# Uklonjen je 'rtree', dodat je 'pygeohash'
+import pygeohash
 
 # -------------------------------------------
 
 
 # =============================================================================
-# === KLASA ZA ANALIZU I UPOZORAVANJE OD OPASNOSTI (VAŠ KOD) ===
+# === KLASA ZA ANALIZU I UPOZORAVANJE OD OPASNOSTI (GeoHash verzija) ===
 # =============================================================================
 
 # Konstante za lakše podešavanje
-POGLED_UNAPRED_KM = 2.0  # Koliko kilometara unapred gledamo
-VREMENSKI_OPSEG_SATI = 1  # +/- 1 sat za doba dana
-VREMENSKI_OPSEG_DANA = 30  # +/- 30 dana za doba godine
-GODINA_ZA_ANALIZU = 2021  # Prema zadatku, dovoljno je uzeti jednu godinu
+POGLED_UNAPRED_KM = 2.0
+VREMENSKI_OPSEG_SATI = 1
+VREMENSKI_OPSEG_DANA = 30
+GODINA_ZA_ANALIZU = 2021
+GEOHASH_PRECISION = 7  # Dobar balans: ćelije su ~153x153 metra
 
 
 class AccidentWarningSystem:
     """
     Enkapsulira svu logiku za učitavanje podataka, izgradnju indeksa
-    i proveru opasnosti na putu.
+    i proveru opasnosti na putu KORISTEĆI GEOHASH.
     """
 
-    def __init__(self, putanja_do_fajla, tip_indeksa='rtree'):
+    def __init__(self, putanja_do_fajla, tip_indeksa='geohash'):
         """
-        Inicijalizuje sistem, učitava podatke i gradi odgovarajući indeks.
+        Inicijalizuje sistem, učitava podatke i priprema ih za GeoHash upite.
         """
-        print("Inicijalizacija sistema za upozorenje...")
+        print("Inicijalizacija sistema za upozorenje sa GeoHash-om...")
         self.gdf_nezgode = self._ucitaj_i_pripremi_podatke(putanja_do_fajla)
         self.indeks = self._izgradi_indeks(tip_indeksa)
         if self.indeks is None:
-            raise Exception("Indeks nije uspešno izgrađen. Prekidam rad.")
+            raise Exception("Podaci za GeoHash nisu uspešno pripremljeni. Prekidam rad.")
         print("Sistem je spreman.")
 
     def _ucitaj_i_pripremi_podatke(self, putanja_do_fajla):
         """
-        Privatna metoda za učitavanje i temeljna pripremu podataka.
+        Privatna metoda za učitavanje i temeljna pripremu podataka sa GeoHash-om.
         """
         print(f"Učitavanje i obrada podataka iz: {putanja_do_fajla}")
         try:
             df = pd.read_excel(putanja_do_fajla, header=None)
-            df.rename(columns={
-                3: 'datum',
-                4: 'lon',
-                5: 'lat'
-            }, inplace=True)
-
+            df.rename(columns={3: 'datum', 4: 'lon', 5: 'lat'}, inplace=True)
         except FileNotFoundError:
             print(f"GREŠKA: Fajl nije pronađen na putanji: {putanja_do_fajla}")
             return None
@@ -69,25 +66,30 @@ class AccidentWarningSystem:
         geometry = [Point(xy) for xy in zip(df['lon'], df['lat'])]
         gdf = gpd.GeoDataFrame(df, geometry=geometry, crs='EPSG:4326')
 
+        print(f"Izračunavanje GeoHash-eva sa preciznošću {GEOHASH_PRECISION}...")
+        gdf['geohash'] = gdf.apply(
+            lambda row: pygeohash.encode(row.geometry.y, row.geometry.x, precision=GEOHASH_PRECISION),
+            axis=1
+        )
+
         print(f"Obrada završena. Učitano {len(gdf)} nezgoda za {GODINA_ZA_ANALIZU}. godinu.")
         return gdf
 
     def _izgradi_indeks(self, tip_indeksa):
         """
-        Gradi prostorni indeks na osnovu izabranog tipa.
+        Za GeoHash, "Indeks" je sama GeoDataFrame tabela sa 'geohash' kolonom.
         """
         if self.gdf_nezgode is None:
             return None
-
-        print(f"Izgradnja '{tip_indeksa}' indeksa...")
-        if tip_indeksa == 'rtree':
-            idx = index.Index()
-            for red in self.gdf_nezgode.itertuples():
-                idx.insert(red.Index, red.geometry.bounds)
-            print("R-tree indeks uspešno izgrađen.")
-            return idx
+        if tip_indeksa == 'geohash':
+            if 'geohash' in self.gdf_nezgode.columns:
+                print("GeoHash podaci su uspešno pripremljeni.")
+                return self.gdf_nezgode
+            else:
+                print("GREŠKA: Kolona 'geohash' nije pronađena.")
+                return None
         else:
-            print(f"GREŠKA: Nepodržan tip indeksa '{tip_indeksa}'")
+            print(f"GREŠKA: Ovaj sistem je konfigurisan samo za 'geohash', a ne za '{tip_indeksa}'")
             return None
 
     def _definisi_oblast_pretrage(self, trenutna_tacka):
@@ -103,15 +105,30 @@ class AccidentWarningSystem:
 
     def proveri_opasnosti_na_deonici(self, trenutna_lokacija, trenutno_vreme):
         """
-        Glavna javna metoda koja vrši sve provere za datu lokaciju i vreme.
+        Glavna javna metoda koja vrši sve provere koristeći GeoHash.
         """
         oblast_pretrage = self._definisi_oblast_pretrage(trenutna_lokacija)
-        ids_kandidata = list(self.indeks.intersection(oblast_pretrage.bounds))
-        if not ids_kandidata:
+
+        # --- FINALNA ISPRAVKA ---
+        bbox = oblast_pretrage.bounds  # tuple: (min_lon, min_lat, max_lon, max_lat)
+        # BoundingBox prima pozicione argumente redosledom: (south, west, north, east)
+        # south = min_lat = bbox[1]
+        # west = min_lon = bbox[0]
+        # north = max_lat = bbox[3]
+        # east = max_lon = bbox[2]
+        bounding_box_obj = pygeohash.BoundingBox(bbox[1], bbox[0], bbox[3], bbox[2])
+        geohashes_to_check = pygeohash.geohashes_in_box(bounding_box_obj)
+        # ---------------------------
+
+        if not geohashes_to_check:
             return 0, 0, 0
 
-        nezgode_u_oblasti = self.gdf_nezgode.iloc[ids_kandidata]
-        nezgode_u_oblasti = nezgode_u_oblasti[nezgode_u_oblasti.intersects(oblast_pretrage)]
+        ids_kandidata = self.indeks[self.indeks['geohash'].str.startswith(tuple(geohashes_to_check))]
+
+        if ids_kandidata.empty:
+            return 0, 0, 0
+
+        nezgode_u_oblasti = ids_kandidata[ids_kandidata.intersects(oblast_pretrage)]
         broj_ukupno = len(nezgode_u_oblasti)
         if broj_ukupno == 0:
             return 0, 0, 0
@@ -131,7 +148,7 @@ class AccidentWarningSystem:
     @staticmethod
     def klasifikuj_opasnost(ukupno, doba_dana, doba_godine):
         """
-        Statička metoda za klasifikaciju nivoa opasnosti. Ne zavisi od stanja objekta.
+        Statička metoda za klasifikaciju nivoa opasnosti.
         """
         skor = (ukupno * 1) + (doba_godine * 1.5) + (doba_dana * 2)
         if skor > 15:
@@ -148,63 +165,37 @@ class AccidentWarningSystem:
 # === GLAVNI DEO SIMULACIJE ===
 # =============================================================================
 
-# Globalna promenljiva za naš sistem upozorenja
 sistem_upozorenja = None
 
 
 def load_accidents_data():
-    """
-    Inicijalizuje AccidentWarningSystem i učitava podatke o nezgodama.
-    """
     global sistem_upozorenja
-
-    # Putanja do fajla je relativna u odnosu na lokaciju ovog .py fajla
-    # '../' znači 'idi jedan folder gore'
     putanja_do_fajla_nezgoda = '../nez-opendata-2021-20220125.xlsx'
-
     try:
-        sistem_upozorenja = AccidentWarningSystem(putanja_do_fajla_nezgoda)
+        sistem_upozorenja = AccidentWarningSystem(putanja_do_fajla_nezgoda, tip_indeksa='geohash')
     except Exception as e:
         print(f"FATALNA GREŠKA: Sistem za upozorenje nije mogao biti pokrenut. Greška: {e}")
         sistem_upozorenja = None
 
 
 def check_accident_zone(lat, lon):
-    """
-    Ova funkcija se sada ne koristi, sva logika je prebačena direktno u glavnu petlju.
-    """
     pass
 
 
 if __name__ == "__main__":
-
-    # ------------------------------
-    # 1. Učitaj podatke o nezgodama koristeći AccidentWarningSystem
-    # ------------------------------
     load_accidents_data()
-    # -------------------------------
-    # -------------------------------
+    if sistem_upozorenja is None:
+        exit()
 
-    start_city = "Beograd"
-    end_city = "Novi Sad"
+    start_city = "Pančevo"
+    end_city = "Zrenjanin"
 
-    # 2. Učitaj mrežu puteva Srbije
     G = load_serbian_roads()
     print(f"Ucitana mreža puteva Srbije! {len(G.nodes)} čvorova, {len(G.edges)} ivica.")
-
-    # 3. Odredjivanje koordinata pocetka i kraja rute
     orig, dest = get_route_coordinates(start_city, end_city)
-
-    # 4. Odredjivanje rute
     route_coords, route = get_route_coords(G, orig, dest)
-
-    # 5. Inicijalizacija grafičke mape za voznju rutom
     drive_simulator = DriveSimulator(G, edge_color='lightgray', edge_linewidth=0.5)
-
-    # 6. Prikaz mape sa rutom
     drive_simulator.prikazi_mapu(route_coords, route_color='blue', auto_marker_color='ro', auto_marker_size=8)
-
-    # 7. Inicijalizuj simulator kretanja automobila sa brzinom 250 km/h i intervalom od 1 sekunde  
     automobil = AutoSimulator(route_coords, speed_kmh=250, interval=1.0)
     automobil.running = True
 
@@ -212,51 +203,28 @@ if __name__ == "__main__":
     print("Kontrole: Auto se pomera automatski svakih", automobil.interval, "sekundi")
     print("Za zaustavljanje pritisnite Ctrl+C\n")
 
-    interval_simulacije = 1.0  # sekunde
-    # 8. Glavna petlja simulacije
+    interval_simulacije = 1.0
     try:
         step_count = 0
         while automobil.running:
-            # Pomeri automobil
             auto_current_pos = automobil.move()
             lat, lon = auto_current_pos
-
             drive_simulator.move_auto_marker(lat, lon, automobil.get_progress_info(), plot_pause=0.01)
-
-            # Pozovi proveru okoline samo na svakih 5 koraka (da ne zatrpava konzolu)
             step_count += 1
             if step_count % 5 == 0:
-                # -------------------------------------------------------------------------
-                # --- INTEGRACIJA SA SISTEMOM UPOZORENJA ---
-                # -------------------------------------------------------------------------
                 if sistem_upozorenja:
-                    # Kreiramo Shapely Point objekat od trenutnih koordinata
                     trenutna_lokacija_point = Point(lon, lat)
                     trenutno_vreme = pd.Timestamp.now()
-
-                    # Pozivamo metode iz vaše klase
                     ukupno, doba_dana, doba_godine = sistem_upozorenja.proveri_opasnosti_na_deonici(
                         trenutna_lokacija_point, trenutno_vreme)
                     nivo_opasnosti = sistem_upozorenja.klasifikuj_opasnost(ukupno, doba_dana, doba_godine)
-
-                    # Ispisujemo rezultat u terminal
                     print(
                         f"Lokacija ({lat:.4f}, {lon:.4f}) | Analiza: U={ukupno}, DD={doba_dana}, DG={doba_godine} | NIVO OPASNOSTI: {nivo_opasnosti}")
 
-                else:
-                    # Ova poruka će se ispisivati ako učitavanje podataka nije uspelo
-                    print("Sistem za upozorenje nije inicijalizovan. Ne mogu proveriti opasnosti.")
-                # -------------------------------------------------------------------------
-
-            # Proveri da li je stigao na kraj
             if automobil.is_finished():
                 print("\n=== Automobil je stigao na destinaciju! ===")
                 break
-
-            # Čekaj interval pre sledećeg pomeraja
             time.sleep(interval_simulacije)
-
     except KeyboardInterrupt:
         print("\n\n=== Simulacija prekinuta ===")
-
     drive_simulator.finish_drive()

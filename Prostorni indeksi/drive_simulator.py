@@ -11,8 +11,6 @@ import contextily as ctx
 import networkx as nx
 
 
-# Napomena: Uklonjeni su dupli importi koji su bili u originalnom fajlu
-
 def load_serbian_roads():
     # Učitaj mrežu puteva Srbije
     G = ox.load_graphml('serbia_roads.graphml')
@@ -20,7 +18,9 @@ def load_serbian_roads():
 
 
 def get_route_coordinates(start_city, end_city):
-    geolocator = Nominatim(user_agent="geo_sim")
+    # --- ISPRAVLJENA LINIJA: Dodat timeout=10 ---
+    geolocator = Nominatim(user_agent="geo_sim", timeout=10)
+    # -------------------------------------------
 
     start_loc = geolocator.geocode(start_city + ", Serbia")
     end_loc = geolocator.geocode(end_city + ", Serbia")
@@ -41,10 +41,8 @@ def get_route_length(route, G):
     route_length = 0
     for i in range(len(route) - 1):
         u, v = route[i], route[i + 1]
-        # Proveri da li postoji ivica i da li ima atribut 'length'
         if G.has_edge(u, v):
             edge_data = G.get_edge_data(u, v)
-            # Uzmi prvi ključ ako postoji više ivica (multigraf)
             if isinstance(edge_data, dict):
                 if 0 in edge_data and 'length' in edge_data[0]:
                     route_length += edge_data[0]['length']
@@ -93,23 +91,18 @@ class DriveSimulator:
         self.marker = None
 
     def prikazi_mapu(self, route_coords, route_color, auto_marker_color='ro', auto_marker_size=8):
-        # 5. Crtanje rute
         x = [lon for lat, lon in route_coords]
         y = [lat for lat, lon in route_coords]
 
         self.ax.plot(x, y, color=route_color, linewidth=2, alpha=0.8, label='Ruta')
 
         self._set_map_bounds(route_coords, padding=0.2)
-
-        # 6. Pozadinska mapa
         self._show_background_map(self.ax)
 
-        # 7. Simulacija kretanja automobila (kao crveni marker)
         self.marker, = self.ax.plot([], [], auto_marker_color, markersize=auto_marker_size, label='Automobil')
-
         self.ax.legend()
 
-        plt.ion()  # Interaktivni mod
+        plt.ion()
         plt.show()
 
     def _show_background_map(self, ax):
@@ -125,7 +118,6 @@ class DriveSimulator:
         min_lat, max_lat = min(lats), max(lats)
         min_lon, max_lon = min(lons), max(lons)
 
-        # Dodaj padding
         lat_range = max_lat - min_lat
         lon_range = max_lon - min_lon
 
@@ -138,10 +130,7 @@ class DriveSimulator:
         self.ax.set_ylim(min_lat, max_lat)
 
     def move_auto_marker(self, lat, lon, auto_progress_info, plot_pause=0.01):
-        # Ažuriraj poziciju auto markera na mapi
         self.marker.set_data([lon], [lat])
-
-        # Informacije o napretku
         title = (f"Pozicija: ({lat:.4f}, {lon:.4f}) | "
                  f"Segment: {auto_progress_info['segment']}/{auto_progress_info['total_segments']} "
                  f"({auto_progress_info['segment_progress']:.1f}%) | "
