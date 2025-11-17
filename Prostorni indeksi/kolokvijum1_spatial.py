@@ -1,15 +1,12 @@
-# -*- coding: utf-8 -*-
 import time
 from auto_simulator import AutoSimulator
-from drive_simulator import DriveSimulator, get_route_coordinates, get_route_coords, load_serbian_roads, \
-    show_route_distances
+from drive_simulator import DriveSimulator, get_route_coordinates, get_route_coords, load_serbian_roads
 
 import math
 import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point, box
 import pygeohash
-
 
 
 POGLED_UNAPRED_KM = 2.0
@@ -58,7 +55,6 @@ class AccidentWarningSystem:
         return gdf
 
     def _izgradi_indeks(self, tip_indeksa):
-
         if self.gdf_nezgode is None:
             return None
         if tip_indeksa == 'geohash':
@@ -73,7 +69,6 @@ class AccidentWarningSystem:
             return None
 
     def _definisi_oblast_pretrage(self, trenutna_tacka):
-
         lat_stepen_u_km = 111.1
         lon_stepen_u_km = lat_stepen_u_km * math.cos(math.radians(trenutna_tacka.y))
         offset_lat = POGLED_UNAPRED_KM / lat_stepen_u_km
@@ -83,11 +78,9 @@ class AccidentWarningSystem:
 
     def proveri_opasnosti_na_deonici(self, trenutna_lokacija, trenutno_vreme):
         oblast_pretrage = self._definisi_oblast_pretrage(trenutna_lokacija)
-
         bbox = oblast_pretrage.bounds
         bounding_box_obj = pygeohash.BoundingBox(bbox[1], bbox[0], bbox[3], bbox[2])
         geohashes_to_check = pygeohash.geohashes_in_box(bounding_box_obj)
-
 
         if not geohashes_to_check:
             return 0, 0, 0
@@ -126,12 +119,13 @@ class AccidentWarningSystem:
         else:
             return "Bezbedno"
 
+
 sistem_upozorenja = None
 
 
 def load_accidents_data():
     global sistem_upozorenja
-    putanja_do_fajla_nezgoda = '../nez-opendata-2021-20220125.xlsx'
+    putanja_do_fajla_nezgoda = 'dataset/nez-opendata-2021-20220125.xlsx'
     try:
         sistem_upozorenja = AccidentWarningSystem(putanja_do_fajla_nezgoda, tip_indeksa='geohash')
     except Exception as e:
@@ -145,20 +139,35 @@ if __name__ == "__main__":
         exit()
 
     start_city = "Pančevo"
-    end_city = "Kraljevo"
+    end_city = "Novi Sad"
 
     G = load_serbian_roads()
     print(f"Ucitana mreža puteva Srbije! {len(G.nodes)} čvorova, {len(G.edges)} ivica.")
     orig, dest = get_route_coordinates(start_city, end_city)
-    route_coords, route = get_route_coords(G, orig, dest)
+    route_coords, route = get_route_coords(G, orig, dest, start_city, end_city)
+
+    if route_coords is None:
+        print("Završavam program jer ruta nije pronađena.")
+        exit()
+
     drive_simulator = DriveSimulator(G, edge_color='lightgray', edge_linewidth=0.5)
     drive_simulator.prikazi_mapu(route_coords, route_color='blue', auto_marker_color='ro', auto_marker_size=8)
     automobil = AutoSimulator(route_coords, speed_kmh=250, interval=1.0)
     automobil.running = True
 
+
+
+    def on_close(event):
+        print("\n=== Zaustavljanje simulacije... ===")
+        automobil.running = False
+
+
+    drive_simulator.fig.canvas.mpl_connect('close_event', on_close)
+
+
     print("\n=== Simulacija pokrenuta ===")
     print("Kontrole: Auto se pomera automatski svakih", automobil.interval, "sekundi")
-    print("Za zaustavljanje pritisnite Ctrl+C\n")
+    print("Za zaustavljanje pritisnite Ctrl+C ili zatvorite prozor sa mapom.\n")
 
     interval_simulacije = 1.0
     try:
@@ -168,10 +177,11 @@ if __name__ == "__main__":
             lat, lon = auto_current_pos
             drive_simulator.move_auto_marker(lat, lon, automobil.get_progress_info(), plot_pause=0.01)
             step_count += 1
+
             if step_count % 5 == 0:
                 if sistem_upozorenja:
                     trenutna_lokacija_point = Point(lon, lat)
-                    trenutno_vreme = pd.Timestamp.now()
+                    trenutno_vreme = pd.Timestamp("2021-01-15 03:00:00") #trenutno_vreme = pd.Timestamp("2021-01-15 03:00:00")
                     ukupno, doba_dana, doba_godine = sistem_upozorenja.proveri_opasnosti_na_deonici(
                         trenutna_lokacija_point, trenutno_vreme)
                     nivo_opasnosti = sistem_upozorenja.klasifikuj_opasnost(ukupno, doba_dana, doba_godine)
@@ -183,5 +193,9 @@ if __name__ == "__main__":
                 break
             time.sleep(interval_simulacije)
     except KeyboardInterrupt:
-        print("\n\n=== Simulacija prekinuta ===")
-    drive_simulator.finish_drive()
+        print("\n\n=== Simulacija prekinuta od strane korisnika (Ctrl+C) ===")
+
+    if automobil.running:
+        drive_simulator.finish_drive()
+
+    print("=== Kraj programa ===")

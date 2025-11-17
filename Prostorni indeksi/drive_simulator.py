@@ -1,8 +1,6 @@
-# --- DODATE LINIJE ZA POPRAVKU ISCRTAVANJA ---
 import matplotlib
 
 matplotlib.use('TkAgg')
-# ---------------------------------------------
 
 import osmnx as ox
 from geopy.geocoders import Nominatim
@@ -63,15 +61,19 @@ def show_route_distances(route_coords):
     print(f"Ukupna dužina rute: {total_distance / 1000:.2f} km")
 
 
-def get_route_coords(G, orig, dest):
+def get_route_coords(G, orig, dest, start_city_name="Početak", end_city_name="Kraj"):
     orig_node = ox.distance.nearest_nodes(G, orig[1], orig[0])
     dest_node = ox.distance.nearest_nodes(G, dest[1], dest[0])
 
-    route = nx.shortest_path(G, orig_node, dest_node, weight='length')
+    try:
+        route = nx.shortest_path(G, orig_node, dest_node, weight='length')
+    except nx.NetworkXNoPath:
+        print(f"GREŠKA: Nije moguće pronaći putanju između {start_city_name} i {end_city_name}.")
+        print("Mogući razlog je što se nalaze u nepovezanim delovima mape.")
+        print("Pokušajte sa drugim gradovima.")
+        return None, None
 
     route_coords = [(G.nodes[n]['y'], G.nodes[n]['x']) for n in route]
-
-    # Izračunaj dužinu puta
     route_length = get_route_length(route, G)
     print(f"Ruta pronađena: {route_length / 1000:.2f} km, {len(route)} čvorova")
 
@@ -125,18 +127,20 @@ class DriveSimulator:
         self.ax.set_ylim(min_lat, max_lat)
 
     def move_auto_marker(self, lat, lon, auto_progress_info, plot_pause=0.01):
-        self.marker.set_data([lon], [lat])
-        title = (f"Pozicija: ({lat:.4f}, {lon:.4f}) | "
-                 f"Segment: {auto_progress_info['segment']}/{auto_progress_info['total_segments']} "
-                 f"({auto_progress_info['segment_progress']:.1f}%) | "
-                 f"Ukupno: {auto_progress_info['overall_progress']:.1f}% | "
-                 f"Brzina: {auto_progress_info['speed_kmh']} km/h")
-        self.ax.set_title(title)
+        if plt.fignum_exists(self.fig.number):
+            self.marker.set_data([lon], [lat])
+            title = (f"Pozicija: ({lat:.4f}, {lon:.4f}) | "
+                     f"Segment: {auto_progress_info['segment']}/{auto_progress_info['total_segments']} "
+                     f"({auto_progress_info['segment_progress']:.1f}%) | "
+                     f"Ukupno: {auto_progress_info['overall_progress']:.1f}% | "
+                     f"Brzina: {auto_progress_info['speed_kmh']} km/h")
+            self.ax.set_title(title)
 
-        plt.draw()
-        plt.pause(plot_pause)
+            plt.draw()
+            plt.pause(plot_pause)
 
     def finish_drive(self):
-        plt.ioff()
-        plt.title("Ruta završena!")
-        plt.show()
+        if plt.fignum_exists(self.fig.number):
+            plt.ioff()
+            plt.title("Ruta završena!")
+            plt.show()
