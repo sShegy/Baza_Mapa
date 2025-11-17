@@ -4,39 +4,24 @@ from auto_simulator import AutoSimulator
 from drive_simulator import DriveSimulator, get_route_coordinates, get_route_coords, load_serbian_roads, \
     show_route_distances
 
-# --- IZMENJENI IMPORTI ZA SISTEM UPOZORENJA ---
 import math
 import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point, box
-# Uklonjen je 'rtree', dodat je 'pygeohash'
 import pygeohash
 
-# -------------------------------------------
 
 
-# =============================================================================
-# === KLASA ZA ANALIZU I UPOZORAVANJE OD OPASNOSTI (GeoHash verzija) ===
-# =============================================================================
-
-# Konstante za lakše podešavanje
 POGLED_UNAPRED_KM = 2.0
 VREMENSKI_OPSEG_SATI = 1
 VREMENSKI_OPSEG_DANA = 30
 GODINA_ZA_ANALIZU = 2021
-GEOHASH_PRECISION = 7  # Dobar balans: ćelije su ~153x153 metra
+GEOHASH_PRECISION = 7
 
 
 class AccidentWarningSystem:
-    """
-    Enkapsulira svu logiku za učitavanje podataka, izgradnju indeksa
-    i proveru opasnosti na putu KORISTEĆI GEOHASH.
-    """
 
     def __init__(self, putanja_do_fajla, tip_indeksa='geohash'):
-        """
-        Inicijalizuje sistem, učitava podatke i priprema ih za GeoHash upite.
-        """
         print("Inicijalizacija sistema za upozorenje sa GeoHash-om...")
         self.gdf_nezgode = self._ucitaj_i_pripremi_podatke(putanja_do_fajla)
         self.indeks = self._izgradi_indeks(tip_indeksa)
@@ -45,9 +30,6 @@ class AccidentWarningSystem:
         print("Sistem je spreman.")
 
     def _ucitaj_i_pripremi_podatke(self, putanja_do_fajla):
-        """
-        Privatna metoda za učitavanje i temeljna pripremu podataka sa GeoHash-om.
-        """
         print(f"Učitavanje i obrada podataka iz: {putanja_do_fajla}")
         try:
             df = pd.read_excel(putanja_do_fajla, header=None)
@@ -76,9 +58,7 @@ class AccidentWarningSystem:
         return gdf
 
     def _izgradi_indeks(self, tip_indeksa):
-        """
-        Za GeoHash, "Indeks" je sama GeoDataFrame tabela sa 'geohash' kolonom.
-        """
+
         if self.gdf_nezgode is None:
             return None
         if tip_indeksa == 'geohash':
@@ -93,9 +73,7 @@ class AccidentWarningSystem:
             return None
 
     def _definisi_oblast_pretrage(self, trenutna_tacka):
-        """
-        Definiše pravougaonu oblast (bounding box) ispred i oko vozila.
-        """
+
         lat_stepen_u_km = 111.1
         lon_stepen_u_km = lat_stepen_u_km * math.cos(math.radians(trenutna_tacka.y))
         offset_lat = POGLED_UNAPRED_KM / lat_stepen_u_km
@@ -104,21 +82,12 @@ class AccidentWarningSystem:
         return box(lon - offset_lon, lat - offset_lat, lon + offset_lon, lat + offset_lat)
 
     def proveri_opasnosti_na_deonici(self, trenutna_lokacija, trenutno_vreme):
-        """
-        Glavna javna metoda koja vrši sve provere koristeći GeoHash.
-        """
         oblast_pretrage = self._definisi_oblast_pretrage(trenutna_lokacija)
 
-        # --- FINALNA ISPRAVKA ---
-        bbox = oblast_pretrage.bounds  # tuple: (min_lon, min_lat, max_lon, max_lat)
-        # BoundingBox prima pozicione argumente redosledom: (south, west, north, east)
-        # south = min_lat = bbox[1]
-        # west = min_lon = bbox[0]
-        # north = max_lat = bbox[3]
-        # east = max_lon = bbox[2]
+        bbox = oblast_pretrage.bounds
         bounding_box_obj = pygeohash.BoundingBox(bbox[1], bbox[0], bbox[3], bbox[2])
         geohashes_to_check = pygeohash.geohashes_in_box(bounding_box_obj)
-        # ---------------------------
+
 
         if not geohashes_to_check:
             return 0, 0, 0
@@ -147,9 +116,6 @@ class AccidentWarningSystem:
 
     @staticmethod
     def klasifikuj_opasnost(ukupno, doba_dana, doba_godine):
-        """
-        Statička metoda za klasifikaciju nivoa opasnosti.
-        """
         skor = (ukupno * 1) + (doba_godine * 1.5) + (doba_dana * 2)
         if skor > 15:
             return "VEOMA OPASNO"
@@ -159,11 +125,6 @@ class AccidentWarningSystem:
             return "UMERENO OPASNO"
         else:
             return "Bezbedno"
-
-
-# =============================================================================
-# === GLAVNI DEO SIMULACIJE ===
-# =============================================================================
 
 sistem_upozorenja = None
 
@@ -178,17 +139,13 @@ def load_accidents_data():
         sistem_upozorenja = None
 
 
-def check_accident_zone(lat, lon):
-    pass
-
-
 if __name__ == "__main__":
     load_accidents_data()
     if sistem_upozorenja is None:
         exit()
 
     start_city = "Pančevo"
-    end_city = "Zrenjanin"
+    end_city = "Kraljevo"
 
     G = load_serbian_roads()
     print(f"Ucitana mreža puteva Srbije! {len(G.nodes)} čvorova, {len(G.edges)} ivica.")

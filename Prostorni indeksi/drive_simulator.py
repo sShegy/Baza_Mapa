@@ -12,15 +12,12 @@ import networkx as nx
 
 
 def load_serbian_roads():
-    # Učitaj mrežu puteva Srbije
     G = ox.load_graphml('serbia_roads.graphml')
     return G
 
 
 def get_route_coordinates(start_city, end_city):
-    # --- ISPRAVLJENA LINIJA: Dodat timeout=10 ---
     geolocator = Nominatim(user_agent="geo_sim", timeout=10)
-    # -------------------------------------------
 
     start_loc = geolocator.geocode(start_city + ", Serbia")
     end_loc = geolocator.geocode(end_city + ", Serbia")
@@ -67,11 +64,9 @@ def show_route_distances(route_coords):
 
 
 def get_route_coords(G, orig, dest):
-    # Nađi najbliže čvorove u grafu
     orig_node = ox.distance.nearest_nodes(G, orig[1], orig[0])
     dest_node = ox.distance.nearest_nodes(G, dest[1], dest[0])
 
-    # Najkraća putanja između čvorova
     route = nx.shortest_path(G, orig_node, dest_node, weight='length')
 
     route_coords = [(G.nodes[n]['y'], G.nodes[n]['x']) for n in route]
