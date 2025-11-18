@@ -19,7 +19,7 @@ GEOHASH_PRECISION = 7
 class AccidentWarningSystem:
 
     def __init__(self, putanja_do_fajla, tip_indeksa='geohash'):
-        print("Inicijalizacija sistema za upozorenje sa GeoHash-om...")
+        print("Inicijalizacija sistema za GeoHash-om...")
         self.gdf_nezgode = self._ucitaj_i_pripremi_podatke(putanja_do_fajla)
         self.indeks = self._izgradi_indeks(tip_indeksa)
         if self.indeks is None:
@@ -138,8 +138,8 @@ if __name__ == "__main__":
     if sistem_upozorenja is None:
         exit()
 
-    start_city = "Pančevo"
-    end_city = "Novi Sad"
+    start_city = "Vranje"
+    end_city = "Jagodina"
 
     G = load_serbian_roads()
     print(f"Ucitana mreža puteva Srbije! {len(G.nodes)} čvorova, {len(G.edges)} ivica.")
@@ -193,7 +193,7 @@ if __name__ == "__main__":
                 break
             time.sleep(interval_simulacije)
     except KeyboardInterrupt:
-        print("\n\n=== Simulacija prekinuta od strane korisnika (Ctrl+C) ===")
+        print("\n\n=== Simulacija je prekinuta (Ctrl+C) ===")
 
     if automobil.running:
         drive_simulator.finish_drive()

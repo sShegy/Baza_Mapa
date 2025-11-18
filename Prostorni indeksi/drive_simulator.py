@@ -31,7 +31,6 @@ def get_route_coordinates(start_city, end_city):
 
     return orig, dest
 
-
 def get_route_length(route, G):
     route_length = 0
     for i in range(len(route) - 1):
