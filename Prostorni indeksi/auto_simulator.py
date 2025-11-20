@@ -12,13 +12,14 @@ class AutoSimulator:
         self.current_segment = 0
         self.progress = 0.0
         
-        self.distance_per_step = (self.speed_kmh * 1000 / 3600) * self.interval  # u metrima
+        self.distance_per_step = (self.speed_kmh * 1000 / 3600) * self.interval
+
         
 
     def get_current_position(self):
         
         if self.current_segment >= len(self.route_coords) - 1:
-            return self.route_coords[-1]  # Kraj rute
+            return self.route_coords[-1]
         
         start = self.route_coords[self.current_segment]
         end = self.route_coords[self.current_segment + 1]
@@ -60,7 +61,7 @@ class AutoSimulator:
             print(f"Trenutni segment: {self.current_segment}, Duzina Segmenta: {segment_length}, Step_distance: {self.distance_per_step}, Progres: {self.progress:.2f}, Increment: {progress_increment:.2f}")
         
         if self.progress >= 1.0 and self.current_segment < len(self.route_coords) - 1:
-            self.progress = 0.0 #-= 1.0
+            self.progress = 0.0
             self.current_segment += 1
             
             if self.current_segment < len(self.route_coords) - 1:

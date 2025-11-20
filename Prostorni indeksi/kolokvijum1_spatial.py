@@ -7,23 +7,23 @@ import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point, box
 import pygeohash
-
+from datetime import time as dt_time, timedelta
 
 POGLED_UNAPRED_KM = 2.0
 VREMENSKI_OPSEG_SATI = 1
 VREMENSKI_OPSEG_DANA = 30
-GODINA_ZA_ANALIZU = 2021
+GODINA_ZA_ANALIZУ = 2021
 GEOHASH_PRECISION = 7
 
 
 class AccidentWarningSystem:
 
     def __init__(self, putanja_do_fajla, tip_indeksa='geohash'):
-        print("Inicijalizacija sistema za GeoHash-om...")
+        print("Inicijalizacija sistema sa GeoHash (prostor) i Datetime (vreme) indeksima...")
         self.gdf_nezgode = self._ucitaj_i_pripremi_podatke(putanja_do_fajla)
         self.indeks = self._izgradi_indeks(tip_indeksa)
         if self.indeks is None:
-            raise Exception("Podaci za GeoHash nisu uspešno pripremljeni. Prekidam rad.")
+            raise Exception("Indeksi nisu uspešno izgrađeni. Prekidam rad.")
         print("Sistem je spreman.")
 
     def _ucitaj_i_pripremi_podatke(self, putanja_do_fajla):
@@ -37,10 +37,7 @@ class AccidentWarningSystem:
 
         df['vreme_nezgode'] = pd.to_datetime(df['datum'], errors='coerce', format='%d.%m.%Y,%H:%M')
         df = df.dropna(subset=['vreme_nezgode', 'lon', 'lat'])
-        df = df[df['vreme_nezgode'].dt.year == GODINA_ZA_ANALIZU].copy()
-
-        df['sat'] = df['vreme_nezgode'].dt.hour
-        df['dan_u_godini'] = df['vreme_nezgode'].dt.dayofyear
+        df = df[df['vreme_nezgode'].dt.year == GODINA_ZA_ANALIZУ].copy()
 
         geometry = [Point(xy) for xy in zip(df['lon'], df['lat'])]
         gdf = gpd.GeoDataFrame(df, geometry=geometry, crs='EPSG:4326')
@@ -51,21 +48,21 @@ class AccidentWarningSystem:
             axis=1
         )
 
-        print(f"Obrada završena. Učitano {len(gdf)} nezgoda za {GODINA_ZA_ANALIZU}. godinu.")
+        print("Kreiranje i sortiranje vremenskog indeksa (DatetimeIndex)...")
+        gdf.set_index('vreme_nezgode', inplace=True)
+        gdf.sort_index(inplace=True)
+
+        print(f"Obrada završena. Učitano {len(gdf)} nezgoda za {GODINA_ZA_ANALIZУ}. godinu.")
         return gdf
 
     def _izgradi_indeks(self, tip_indeksa):
         if self.gdf_nezgode is None:
             return None
-        if tip_indeksa == 'geohash':
-            if 'geohash' in self.gdf_nezgode.columns:
-                print("GeoHash podaci su uspešno pripremljeni.")
-                return self.gdf_nezgode
-            else:
-                print("GREŠKA: Kolona 'geohash' nije pronađena.")
-                return None
+        if tip_indeksa == 'geohash' and isinstance(self.gdf_nezgode.index, pd.DatetimeIndex):
+            print("Prostorni (GeoHash) i vremenski (DatetimeIndex) indeksi su uspešno pripremljeni.")
+            return self.gdf_nezgode
         else:
-            print(f"GREŠKA: Ovaj sistem je konfigurisan samo za 'geohash', a ne za '{tip_indeksa}'")
+            print("GREŠКА: Indeksi nisu pravilno konfigurisani.")
             return None
 
     def _definisi_oblast_pretrage(self, trenutna_tacka):
@@ -80,7 +77,7 @@ class AccidentWarningSystem:
         oblast_pretrage = self._definisi_oblast_pretrage(trenutna_lokacija)
         bbox = oblast_pretrage.bounds
         bounding_box_obj = pygeohash.BoundingBox(bbox[1], bbox[0], bbox[3], bbox[2])
-        geohashes_to_check = pygeohash.geohashes_in_box(bounding_box_obj)
+        geohashes_to_check = pygeohash.geohashes_in_box(bounding_box_obj, precision=GEOHASH_PRECISION)
 
         if not geohashes_to_check:
             return 0, 0, 0
@@ -92,18 +89,22 @@ class AccidentWarningSystem:
 
         nezgode_u_oblasti = ids_kandidata[ids_kandidata.intersects(oblast_pretrage)]
         broj_ukupno = len(nezgode_u_oblasti)
+
         if broj_ukupno == 0:
             return 0, 0, 0
 
-        sat = trenutno_vreme.hour
-        donja_granica_sati, gornja_granica_sati = (sat - VREMENSKI_OPSEG_SATI), (sat + VREMENSKI_OPSEG_SATI)
-        broj_doba_dana = len(
-            nezgode_u_oblasti[nezgode_u_oblasti['sat'].between(donja_granica_sati, gornja_granica_sati)])
 
-        dan = trenutno_vreme.dayofyear
-        donja_granica_dana, gornja_granica_dana = (dan - VREMENSKI_OPSEG_DANA), (dan + VREMENSKI_OPSEG_DANA)
-        broj_doba_godine = len(
-            nezgode_u_oblasti[nezgode_u_oblasti['dan_u_godini'].between(donja_granica_dana, gornja_granica_dana)])
+        start_date = trenutno_vreme - timedelta(days=VREMENSKI_OPSEG_DANA)
+        end_date = trenutno_vreme + timedelta(days=VREMENSKI_OPSEG_DANA)
+
+        nezgode_sezona = nezgode_u_oblasti.loc[start_date:end_date]
+        broj_doba_godine = len(nezgode_sezona)
+
+        start_time = (trenutno_vreme - timedelta(hours=VREMENSKI_OPSEG_SATI)).time()
+        end_time = (trenutno_vreme + timedelta(hours=VREMENSKI_OPSEG_SATI)).time()
+
+        nezgode_dan = nezgode_u_oblasti.between_time(start_time, end_time)
+        broj_doba_dana = len(nezgode_dan)
 
         return broj_ukupno, broj_doba_dana, broj_doba_godine
 
@@ -138,8 +139,8 @@ if __name__ == "__main__":
     if sistem_upozorenja is None:
         exit()
 
-    start_city = "Vranje"
-    end_city = "Jagodina"
+    start_city = "Beograd"
+    end_city = "Novi Sad"
 
     G = load_serbian_roads()
     print(f"Ucitana mreža puteva Srbije! {len(G.nodes)} čvorova, {len(G.edges)} ivica.")
@@ -156,7 +157,6 @@ if __name__ == "__main__":
     automobil.running = True
 
 
-
     def on_close(event):
         print("\n=== Zaustavljanje simulacije... ===")
         automobil.running = False
@@ -164,12 +164,13 @@ if __name__ == "__main__":
 
     drive_simulator.fig.canvas.mpl_connect('close_event', on_close)
 
-
     print("\n=== Simulacija pokrenuta ===")
     print("Kontrole: Auto se pomera automatski svakih", automobil.interval, "sekundi")
     print("Za zaustavljanje pritisnite Ctrl+C ili zatvorite prozor sa mapom.\n")
 
+    vreme_polaska = pd.Timestamp("2021-07-15 14:00:00")
     interval_simulacije = 1.0
+
     try:
         step_count = 0
         while automobil.running:
@@ -181,17 +182,23 @@ if __name__ == "__main__":
             if step_count % 5 == 0:
                 if sistem_upozorenja:
                     trenutna_lokacija_point = Point(lon, lat)
-                    trenutno_vreme = pd.Timestamp("2021-01-15 03:00:00") #trenutno_vreme = pd.Timestamp("2021-01-15 03:00:00")
+
+                    trenutno_vreme_simulacije = vreme_polaska + timedelta(seconds=step_count * automobil.interval)
+
                     ukupno, doba_dana, doba_godine = sistem_upozorenja.proveri_opasnosti_na_deonici(
-                        trenutna_lokacija_point, trenutno_vreme)
+                        trenutna_lokacija_point, trenutno_vreme_simulacije)
+
                     nivo_opasnosti = sistem_upozorenja.klasifikuj_opasnost(ukupno, doba_dana, doba_godine)
-                    print(
-                        f"Lokacija ({lat:.4f}, {lon:.4f}) | Analiza: U={ukupno}, DD={doba_dana}, DG={doba_godine} | NIVO OPASNOSTI: {nivo_opasnosti}")
+
+                    print(f"Vreme: {trenutno_vreme_simulacije.time()} | Lokacija ({lat:.4f}, {lon:.4f}) | "
+                          f"Analiza: U={ukupno}, DD={doba_dana}, DG={doba_godine} | NIVO OPASNOSTI: {nivo_opasnosti}")
 
             if automobil.is_finished():
                 print("\n=== Automobil je stigao na destinaciju! ===")
                 break
+
             time.sleep(interval_simulacije)
+
     except KeyboardInterrupt:
         print("\n\n=== Simulacija je prekinuta (Ctrl+C) ===")
 
