@@ -1,0 +1,481 @@
+Directory structure:
+└── Baze_podataka_projekat/
+    └── Prostorni indeksi/
+        ├── auto_simulator.py
+        ├── drive_simulator.py
+        └── kolokvijum1_spatial.py
+
+================================================
+FILE: Prostorni indeksi/auto_simulator.py
+================================================
+from geopy.distance import geodesic
+
+class AutoSimulator:
+
+    def __init__(self, route_coords, speed_kmh=60, interval=1.0):
+       
+        self.route_coords = route_coords
+        self.speed_kmh = speed_kmh
+        self.interval = interval
+        self.running = False
+        
+        self.current_segment = 0
+        self.progress = 0.0
+        
+        self.distance_per_step = (self.speed_kmh * 1000 / 3600) * self.interval
+
+        
+
+    def get_current_position(self):
+        
+        if self.current_segment >= len(self.route_coords) - 1:
+            return self.route_coords[-1]
+        
+        start = self.route_coords[self.current_segment]
+        end = self.route_coords[self.current_segment + 1]
+        
+        lat = start[0] + (end[0] - start[0]) * self.progress
+        lon = start[1] + (end[1] - start[1]) * self.progress
+        
+        return (lat, lon)
+    
+    def get_current_segment(self):
+        return self.current_segment
+    
+    def move(self, debug_print=False):
+       
+        if self.current_segment >= len(self.route_coords) - 1:
+            self.running = False
+            return self.get_current_position()
+            
+
+        start = self.route_coords[self.current_segment]
+        end = self.route_coords[self.current_segment + 1]
+        
+        segment_length = geodesic(start, end).meters
+        
+        if segment_length == 0:
+
+            if debug_print:
+                print(f"Trenutni segment: {self.current_segment}, Duzina: {segment_length}")
+            
+            self.current_segment += 1
+            self.progress = 0.0
+    
+            return self.get_current_position()
+        
+        progress_increment = self.distance_per_step / segment_length
+        self.progress += progress_increment
+
+        if debug_print:
+            print(f"Trenutni segment: {self.current_segment}, Duzina Segmenta: {segment_length}, Step_distance: {self.distance_per_step}, Progres: {self.progress:.2f}, Increment: {progress_increment:.2f}")
+        
+        if self.progress >= 1.0 and self.current_segment < len(self.route_coords) - 1:
+            self.progress = 0.0
+            self.current_segment += 1
+            
+            if self.current_segment < len(self.route_coords) - 1:
+                start = self.route_coords[self.current_segment]
+                end = self.route_coords[self.current_segment + 1]
+                segment_length = geodesic(start, end).meters
+                
+                if segment_length > 0:
+                    progress_increment = segment_length / self.distance_per_step 
+                else:
+                    self.current_segment += 1
+                    self.progress = 0.0
+        
+        return self.get_current_position()
+    
+    def increase_speed(self):
+        
+        self.speed_kmh += 10
+        self.distance_per_step = (self.speed_kmh * 1000 / 3600) * self.interval
+        print(f"Brzina povećana: {self.speed_kmh} km/h")
+    
+    def decrease_speed(self):
+        
+        if self.speed_kmh > 10:
+            self.speed_kmh -= 10
+            self.distance_per_step = (self.speed_kmh * 1000 / 3600) * self.interval
+            print(f"Brzina smanjena: {self.speed_kmh} km/h")
+    
+    def is_finished(self):
+        
+        return self.current_segment >= len(self.route_coords) - 1 and self.progress >= 1.0
+   
+    def get_progress_info(self):
+        
+        total_segments = len(self.route_coords) - 1
+        overall_progress = (self.current_segment + self.progress) / total_segments * 100
+        return {
+            'segment': self.current_segment,
+            'total_segments': total_segments,
+            'segment_progress': self.progress * 100,
+            'overall_progress': overall_progress,
+            'speed_kmh': self.speed_kmh
+        }
+
+
+================================================
+FILE: Prostorni indeksi/drive_simulator.py
+================================================
+import matplotlib
+
+matplotlib.use('TkAgg')
+
+import osmnx as ox
+from geopy.geocoders import Nominatim
+import matplotlib.pyplot as plt
+import contextily as ctx
+import networkx as nx
+
+
+def load_serbian_roads():
+    G = ox.load_graphml('serbia_roads.graphml')
+    return G
+
+
+def get_route_coordinates(start_city, end_city):
+    geolocator = Nominatim(user_agent="geo_sim", timeout=10)
+
+    start_loc = geolocator.geocode(start_city + ", Serbia")
+    end_loc = geolocator.geocode(end_city + ", Serbia")
+
+    if not start_loc or not end_loc:
+        raise ValueError(f"Nisu pronađene koordinate za {start_city} ili {end_city}")
+
+    orig = (start_loc.latitude, start_loc.longitude)
+    dest = (end_loc.latitude, end_loc.longitude)
+
+    print(f"{start_city}: {orig}")
+    print(f"{end_city}: {dest}")
+
+    return orig, dest
+
+def get_route_length(route, G):
+    route_length = 0
+    for i in range(len(route) - 1):
+        u, v = route[i], route[i + 1]
+        if G.has_edge(u, v):
+            edge_data = G.get_edge_data(u, v)
+            if isinstance(edge_data, dict):
+                if 0 in edge_data and 'length' in edge_data[0]:
+                    route_length += edge_data[0]['length']
+                elif 'length' in edge_data:
+                    route_length += edge_data['length']
+    return route_length
+
+
+def show_route_distances(route_coords):
+    total_distance = 0.0
+    from geopy.distance import geodesic
+
+    print("Segmenti rute:")
+    for i in range(len(route_coords) - 1):
+        start = route_coords[i]
+        end = route_coords[i + 1]
+        segment_distance = geodesic(start, end).meters
+        total_distance += segment_distance
+        print(f"  Segment {i + 1}: {segment_distance:.2f} m")
+
+    print(f"Ukupna dužina rute: {total_distance / 1000:.2f} km")
+
+
+def get_route_coords(G, orig, dest, start_city_name="Početak", end_city_name="Kraj"):
+    orig_node = ox.distance.nearest_nodes(G, orig[1], orig[0])
+    dest_node = ox.distance.nearest_nodes(G, dest[1], dest[0])
+
+    try:
+        route = nx.shortest_path(G, orig_node, dest_node, weight='length')
+    except nx.NetworkXNoPath:
+        print(f"GREŠKA: Nije moguće pronaći putanju između {start_city_name} i {end_city_name}.")
+        print("Mogući razlog je što se nalaze u nepovezanim delovima mape.")
+        print("Pokušajte sa drugim gradovima.")
+        return None, None
+
+    route_coords = [(G.nodes[n]['y'], G.nodes[n]['x']) for n in route]
+    route_length = get_route_length(route, G)
+    print(f"Ruta pronađena: {route_length / 1000:.2f} km, {len(route)} čvorova")
+
+    return route_coords, route
+
+
+class DriveSimulator:
+
+    def __init__(self, G, edge_color='lightgray', edge_linewidth=0.5):
+        self.fig, self.ax = ox.plot_graph(G, node_size=0, edge_color=edge_color, edge_linewidth=edge_linewidth,
+                                          show=False, close=False)
+        self.marker = None
+
+    def prikazi_mapu(self, route_coords, route_color, auto_marker_color='ro', auto_marker_size=8):
+        x = [lon for lat, lon in route_coords]
+        y = [lat for lat, lon in route_coords]
+
+        self.ax.plot(x, y, color=route_color, linewidth=2, alpha=0.8, label='Ruta')
+
+        self._set_map_bounds(route_coords, padding=0.2)
+        self._show_background_map(self.ax)
+
+        self.marker, = self.ax.plot([], [], auto_marker_color, markersize=auto_marker_size, label='Automobil')
+        self.ax.legend()
+
+        plt.ion()
+        plt.show()
+
+    def _show_background_map(self, ax):
+        try:
+            ctx.add_basemap(ax, crs="EPSG:4326", source=ctx.providers.OpenStreetMap.Mapnik)
+        except Exception as e:
+            print(f"Contextily nije dostupan: {e}")
+
+    def _set_map_bounds(self, route_coords, padding=0.05):
+        lats = [coord[0] for coord in route_coords]
+        lons = [coord[1] for coord in route_coords]
+
+        min_lat, max_lat = min(lats), max(lats)
+        min_lon, max_lon = min(lons), max(lons)
+
+        lat_range = max_lat - min_lat
+        lon_range = max_lon - min_lon
+
+        min_lat -= lat_range * padding
+        max_lat += lat_range * padding
+        min_lon -= lon_range * padding
+        max_lon += lon_range * padding
+
+        self.ax.set_xlim(min_lon, max_lon)
+        self.ax.set_ylim(min_lat, max_lat)
+
+    def move_auto_marker(self, lat, lon, auto_progress_info, plot_pause=0.01):
+        if plt.fignum_exists(self.fig.number):
+            self.marker.set_data([lon], [lat])
+            title = (f"Pozicija: ({lat:.4f}, {lon:.4f}) | "
+                     f"Segment: {auto_progress_info['segment']}/{auto_progress_info['total_segments']} "
+                     f"({auto_progress_info['segment_progress']:.1f}%) | "
+                     f"Ukupno: {auto_progress_info['overall_progress']:.1f}% | "
+                     f"Brzina: {auto_progress_info['speed_kmh']} km/h")
+            self.ax.set_title(title)
+
+            plt.draw()
+            plt.pause(plot_pause)
+
+    def finish_drive(self):
+        if plt.fignum_exists(self.fig.number):
+            plt.ioff()
+            plt.title("Ruta završena!")
+            plt.show()
+
+
+================================================
+FILE: Prostorni indeksi/kolokvijum1_spatial.py
+================================================
+import time
+from auto_simulator import AutoSimulator
+from drive_simulator import DriveSimulator, get_route_coordinates, get_route_coords, load_serbian_roads
+
+import math
+import pandas as pd
+import geopandas as gpd
+from shapely.geometry import Point, box
+import pygeohash
+from datetime import time as dt_time, timedelta
+
+POGLED_UNAPRED_KM = 2.0
+VREMENSKI_OPSEG_SATI = 1
+VREMENSKI_OPSEG_DANA = 30
+GODINA_ZA_ANALIZУ = 2021
+GEOHASH_PRECISION = 7
+
+
+class AccidentWarningSystem:
+
+    def __init__(self, putanja_do_fajla, tip_indeksa='geohash'):
+        print("Inicijalizacija sistema sa GeoHash (prostor) i Datetime (vreme) indeksima...")
+        self.gdf_nezgode = self._ucitaj_i_pripremi_podatke(putanja_do_fajla)
+        self.indeks = self._izgradi_indeks(tip_indeksa)
+        if self.indeks is None:
+            raise Exception("Indeksi nisu uspešno izgrađeni. Prekidam rad.")
+        print("Sistem je spreman.")
+
+    def _ucitaj_i_pripremi_podatke(self, putanja_do_fajla):
+        print(f"Učitavanje i obrada podataka iz: {putanja_do_fajla}")
+        try:
+            df = pd.read_excel(putanja_do_fajla, header=None)
+            df.rename(columns={3: 'datum', 4: 'lon', 5: 'lat'}, inplace=True)
+        except FileNotFoundError:
+            print(f"GREŠKA: Fajl nije pronađen na putanji: {putanja_do_fajla}")
+            return None
+
+        df['vreme_nezgode'] = pd.to_datetime(df['datum'], errors='coerce', format='%d.%m.%Y,%H:%M')
+        df = df.dropna(subset=['vreme_nezgode', 'lon', 'lat'])
+        df = df[df['vreme_nezgode'].dt.year == GODINA_ZA_ANALIZУ].copy()
+
+        geometry = [Point(xy) for xy in zip(df['lon'], df['lat'])]
+        gdf = gpd.GeoDataFrame(df, geometry=geometry, crs='EPSG:4326')
+
+        print(f"Izračunavanje GeoHash-eva sa preciznošću {GEOHASH_PRECISION}...")
+        gdf['geohash'] = gdf.apply(
+            lambda row: pygeohash.encode(row.geometry.y, row.geometry.x, precision=GEOHASH_PRECISION),
+            axis=1
+        )
+
+        print("Kreiranje i sortiranje vremenskog indeksa (DatetimeIndex)...")
+        gdf.set_index('vreme_nezgode', inplace=True)
+        gdf.sort_index(inplace=True)
+
+        print(f"Obrada završena. Učitano {len(gdf)} nezgoda za {GODINA_ZA_ANALIZУ}. godinu.")
+        return gdf
+
+    def _izgradi_indeks(self, tip_indeksa):
+        if self.gdf_nezgode is None:
+            return None
+        if tip_indeksa == 'geohash' and isinstance(self.gdf_nezgode.index, pd.DatetimeIndex):
+            print("Prostorni (GeoHash) i vremenski (DatetimeIndex) indeksi su uspešno pripremljeni.")
+            return self.gdf_nezgode
+        else:
+            print("GREŠКА: Indeksi nisu pravilno konfigurisani.")
+            return None
+
+    def _definisi_oblast_pretrage(self, trenutna_tacka):
+        lat_stepen_u_km = 111.1
+        lon_stepen_u_km = lat_stepen_u_km * math.cos(math.radians(trenutna_tacka.y))
+        offset_lat = POGLED_UNAPRED_KM / lat_stepen_u_km
+        offset_lon = POGLED_UNAPRED_KM / lon_stepen_u_km
+        lon, lat = trenutna_tacka.x, trenutna_tacka.y
+        return box(lon - offset_lon, lat - offset_lat, lon + offset_lon, lat + offset_lat)
+
+    def proveri_opasnosti_na_deonici(self, trenutna_lokacija, trenutno_vreme):
+        oblast_pretrage = self._definisi_oblast_pretrage(trenutna_lokacija)
+        bbox = oblast_pretrage.bounds
+        bounding_box_obj = pygeohash.BoundingBox(bbox[1], bbox[0], bbox[3], bbox[2])
+        geohashes_to_check = pygeohash.geohashes_in_box(bounding_box_obj, precision=GEOHASH_PRECISION)
+
+        if not geohashes_to_check:
+            return 0, 0, 0
+
+        ids_kandidata = self.indeks[self.indeks['geohash'].str.startswith(tuple(geohashes_to_check))]
+
+        if ids_kandidata.empty:
+            return 0, 0, 0
+
+        nezgode_u_oblasti = ids_kandidata[ids_kandidata.intersects(oblast_pretrage)]
+        broj_ukupno = len(nezgode_u_oblasti)
+
+        if broj_ukupno == 0:
+            return 0, 0, 0
+
+
+        start_date = trenutno_vreme - timedelta(days=VREMENSKI_OPSEG_DANA)
+        end_date = trenutno_vreme + timedelta(days=VREMENSKI_OPSEG_DANA)
+
+        nezgode_sezona = nezgode_u_oblasti.loc[start_date:end_date]
+        broj_doba_godine = len(nezgode_sezona)
+
+        start_time = (trenutno_vreme - timedelta(hours=VREMENSKI_OPSEG_SATI)).time()
+        end_time = (trenutno_vreme + timedelta(hours=VREMENSKI_OPSEG_SATI)).time()
+
+        nezgode_dan = nezgode_u_oblasti.between_time(start_time, end_time)
+        broj_doba_dana = len(nezgode_dan)
+
+        return broj_ukupno, broj_doba_dana, broj_doba_godine
+
+    @staticmethod
+    def klasifikuj_opasnost(ukupno, doba_dana, doba_godine):
+        skor = (ukupno * 1) + (doba_godine * 1.5) + (doba_dana * 2)
+        if skor > 15:
+            return "VEOMA OPASNO"
+        elif skor > 8:
+            return "OPASNO"
+        elif skor > 2:
+            return "UMERENO OPASNO"
+        else:
+            return "Bezbedno"
+
+
+sistem_upozorenja = None
+
+
+def load_accidents_data():
+    global sistem_upozorenja
+    putanja_do_fajla_nezgoda = 'dataset/nez-opendata-2021-20220125.xlsx'
+    try:
+        sistem_upozorenja = AccidentWarningSystem(putanja_do_fajla_nezgoda, tip_indeksa='geohash')
+    except Exception as e:
+        print(f"FATALNA GREŠKA: Sistem za upozorenje nije mogao biti pokrenut. Greška: {e}")
+        sistem_upozorenja = None
+
+
+if __name__ == "__main__":
+    load_accidents_data()
+    if sistem_upozorenja is None:
+        exit()
+
+    start_city = "Beograd"
+    end_city = "Novi Sad"
+
+    G = load_serbian_roads()
+    print(f"Ucitana mreža puteva Srbije! {len(G.nodes)} čvorova, {len(G.edges)} ivica.")
+    orig, dest = get_route_coordinates(start_city, end_city)
+    route_coords, route = get_route_coords(G, orig, dest, start_city, end_city)
+
+    if route_coords is None:
+        print("Završavam program jer ruta nije pronađena.")
+        exit()
+
+    drive_simulator = DriveSimulator(G, edge_color='lightgray', edge_linewidth=0.5)
+    drive_simulator.prikazi_mapu(route_coords, route_color='blue', auto_marker_color='ro', auto_marker_size=8)
+    automobil = AutoSimulator(route_coords, speed_kmh=250, interval=1.0)
+    automobil.running = True
+
+
+    def on_close(event):
+        print("\n=== Zaustavljanje simulacije... ===")
+        automobil.running = False
+
+
+    drive_simulator.fig.canvas.mpl_connect('close_event', on_close)
+
+    print("\n=== Simulacija pokrenuta ===")
+    print("Kontrole: Auto se pomera automatski svakih", automobil.interval, "sekundi")
+    print("Za zaustavljanje pritisnite Ctrl+C ili zatvorite prozor sa mapom.\n")
+
+    vreme_polaska = pd.Timestamp("2021-07-15 14:00:00")
+    interval_simulacije = 1.0
+
+    try:
+        step_count = 0
+        while automobil.running:
+            auto_current_pos = automobil.move()
+            lat, lon = auto_current_pos
+            drive_simulator.move_auto_marker(lat, lon, automobil.get_progress_info(), plot_pause=0.01)
+            step_count += 1
+
+            if step_count % 5 == 0:
+                if sistem_upozorenja:
+                    trenutna_lokacija_point = Point(lon, lat)
+
+                    trenutno_vreme_simulacije = vreme_polaska + timedelta(seconds=step_count * automobil.interval)
+
+                    ukupno, doba_dana, doba_godine = sistem_upozorenja.proveri_opasnosti_na_deonici(
+                        trenutna_lokacija_point, trenutno_vreme_simulacije)
+
+                    nivo_opasnosti = sistem_upozorenja.klasifikuj_opasnost(ukupno, doba_dana, doba_godine)
+
+                    print(f"Vreme: {trenutno_vreme_simulacije.time()} | Lokacija ({lat:.4f}, {lon:.4f}) | "
+                          f"Analiza: U={ukupno}, DD={doba_dana}, DG={doba_godine} | NIVO OPASNOSTI: {nivo_opasnosti}")
+
+            if automobil.is_finished():
+                print("\n=== Automobil je stigao na destinaciju! ===")
+                break
+
+            time.sleep(interval_simulacije)
+
+    except KeyboardInterrupt:
+        print("\n\n=== Simulacija je prekinuta (Ctrl+C) ===")
+
+    if automobil.running:
+        drive_simulator.finish_drive()
+
+    print("=== Kraj programa ===")
+
